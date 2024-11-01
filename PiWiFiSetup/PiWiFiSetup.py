@@ -65,7 +65,7 @@ def scan_wifi_networks():
     iwlist_raw = None
     i = 0
     while (not iwlist_raw or iwlist_raw.returncode != 0) and i < 10:
-        iwlist_raw = subprocess.run(['iwlist', 'wlan0', 'scan'], capture_output=True)
+        iwlist_raw = subprocess.run(['iwlist', app.config_hash['interface'], 'scan'], capture_output=True)
         i = i + 1 
         if iwlist_raw.returncode != 0:
             print(iwlist_raw.stderr)
@@ -89,23 +89,26 @@ def create_wpa_supplicant(ssid, wifi_key):
     
     in_network = 0
     wpa_file = '/etc/wpa_supplicant/wpa_supplicant.conf'
-    with fileinput.FileInput(wpa_file, inplace=True) as wpa_supplicant:
-        for line in wpa_supplicant:
-            if in_network == 1:
-                if 'ssid=' in line:
-                    line_array = line.split('=')
-                    line_array[1] = ssid
-                    print(line_array[0] + '="' + str(line_array[1]) + '"')
-                elif 'key_mgmt=NONE' in line or 'psk=' in line:
-                    print(wifi_key_line)
+    if subprocess.call(['systemctl', '-q', 'is-enabled', 'systemd-networkd.service']) == 0:
+        wpa_file = '/etc/wpa_supplicant/wpa_supplicant-' + app.config_hash['interface'] + '.conf'
+    if os.path.isfile(wpa_file):
+        with fileinput.FileInput(wpa_file, inplace=True) as wpa_supplicant:
+            for line in wpa_supplicant:
+                if in_network == 1:
+                    if 'ssid=' in line:
+                        line_array = line.split('=')
+                        line_array[1] = ssid
+                        print(line_array[0] + '="' + str(line_array[1]) + '"')
+                    elif 'key_mgmt=NONE' in line or 'psk=' in line:
+                        print(wifi_key_line)
+                    else:
+                        print(line, end='')
+                        if '}' in line:
+                            in_network = 2
                 else:
                     print(line, end='')
-                    if '}' in line:
-                        in_network = 2
-            else:
-                print(line, end='')
-            if 'network=' in line and in_network < 2:
-                in_network = 1
+                if 'network=' in line and in_network < 2:
+                    in_network = 1
     if not in_network:
         wpa_h = open(wpa_file, 'a')
         wpa_h.write('network={\n')
@@ -155,11 +158,30 @@ def update_wpa(wpa_enabled, wpa_key):
         config_file.close()
 
 
+def get_first_wifi_interface():
+    try:
+        # List all network interfaces from /sys/class/net/
+        interfaces = os.listdir('/sys/class/net/')
+
+        # Loop through each interface and check if the 'wireless' subdirectory exists
+        for interface in interfaces:
+            wireless_path = f'/sys/class/net/{interface}/wireless'
+            if os.path.isdir(wireless_path):
+                return interface
+
+        raise RuntimeError("No Wi-Fi interface found")
+    
+    except Exception as e:
+        return f"Error: {e}"
+
 def config_file_hash():
     #defaults
     config_hash = {'ssid_prefix': 'Pi $id Wifi Setup',
                    'wpa_enabled': '1', 
-                   'wpa_key': '1234567890'}
+                   'wpa_key': '1234567890',
+                   'interface': '',
+                   'driver':'nl80211',
+                   'channel':'1'}
     if os.path.isfile(app.config_file):
         config_file = open(app.config_file)
 
@@ -167,13 +189,20 @@ def config_file_hash():
             line_key = line.split("=")[0]
             line_value = line.split("=")[1].rstrip()
             config_hash[line_key] = line_value
-    
+
+    id = False   
     if os.path.isfile('/proc/device-tree/serial-number') and os.access('/proc/device-tree/serial-number', os.R_OK):
         with open('/proc/device-tree/serial-number', 'r') as f:
             id = f.readline()[8:].rstrip('\x00')
-        if id:
-            t = Template(config_hash['ssid_prefix'])
-            config_hash['ssid_prefix'] = t.substitute(id=id)
+    elif os.path.isfile('/etc/machine-id') and os.access('/etc/machine-id', os.R_OK):
+        with open('/etc/machine-id', 'r') as f:
+            id = f.readline()[:6].rstrip()
+    if id:
+        t = Template(config_hash['ssid_prefix'])
+        config_hash['ssid_prefix'] = t.substitute(id=id)
+
+    if not config_hash['interface']:
+        config_hash['interface'] = get_first_wifi_interface()
 
     return config_hash
 
@@ -189,9 +218,9 @@ def start_hostapd():
         time.sleep(2)
 
     app.hostapd_conf = tempfile.NamedTemporaryFile(mode='w')
-    app.hostapd_conf.writelines(['interface=wlan0\n',
-                                 'driver=nl80211\n',
-                                 'channel=1\n'])
+    app.hostapd_conf.writelines(['interface=' + app.config_hash['interface'] + '\n',
+                                 'driver=' + app.config_hash['driver'] + '\n',
+                                 'channel=' + app.config_hash['channel'] + '\n'])
     app.hostapd_conf.write('ssid=' + app.config_hash['ssid_prefix'] + '\n')
     if app.config_hash['wpa_enabled'] == '1':
         app.hostapd_conf.writelines(['auth_algs=1\n',
@@ -212,13 +241,23 @@ def main():
     app.config_file = '/etc/PiWiFiSetup/PiWiFiSetup.conf'
     app.config_hash = config_file_hash()
     app.hostapd = None
+    interface = app.config_hash['interface']
 
-    # Stop dhcpcd and dnsmasq so they don't interfere
+    # Бринг wifi down if systemd-networkd
+    if subprocess.call(['systemctl', '-q', 'is-enabled', 'systemd-networkd.service']) == 0:
+        subprocess.call(['networkctl', 'down', interface])
+        subprocess.call(['systemctl', 'stop', 'wpa_supplicant@' + interface + '.service'])
+
+    # Stop dnsmasq so they don't interfere
     subprocess.check_call(['systemctl', 'stop', 'dnsmasq.service'])
 
     # Setup the ip address
     subprocess.check_call(['rfkill','unblock','wlan'])
-    subprocess.check_call(['ip','address','add', '10.0.0.1/24', 'dev', 'wlan0'])
+    subprocess.check_call(['ip','address','add', '10.0.0.1/24', 'dev', interface])
+
+    iptables_params = ['-i', interface, '-p', 'udp', '-m', 'udp', '--sport', '67:68', '--dport', '67:68', '-m', 'state', '--state', 'NEW,ESTABLISHED', '-j', 'ACCEPT']
+    # Ensure iptables can server dhcp
+    subprocess.check_call(['iptables','-I','INPUT', '1'] + iptables_params)    
 
     # start hostapd
     start_hostapd()
@@ -228,13 +267,15 @@ def main():
 
     # Start dnsmasq
     dnsmasq = subprocess.Popen(['dnsmasq', '-C', '/dev/null', '--no-daemon', 
-                                        '--interface','wlan0',
+                                        '--interface', interface,
                                         '--bind-interfaces',
                                         '--except-interface','lo',
                                         '--dhcp-range','10.0.0.10,10.0.0.15,12h',
                                         '--address','/#/10.0.0.1',
                                         '--no-resolv',
-                                        '--no-hosts'
+                                        '--no-hosts',
+                                        #'--log-dhcp',
+                                        #'--log-debug'
                                         ],
                         stdout=subprocess.PIPE,
                         stderr=subprocess.STDOUT)
@@ -248,9 +289,28 @@ def main():
     app.hostapd.terminate()
     app.hostapd_conf.close()
     dnsmasq.terminate()
-    subprocess.check_call(['ip','address','del', '10.0.0.1/24', 'dev', 'wlan0'])
+    subprocess.check_call(['ip', 'address', 'del', '10.0.0.1/24', 'dev', interface])
+    # Clear our iptables record
+    subprocess.check_call(['iptables','-D','INPUT'] + iptables_params)
+
     subprocess.check_call(['systemctl', 'daemon-reload'])
-    subprocess.check_call(['systemctl', 'restart', 'wpa_supplicant.service', 'dhcpcd.service'])
+    if subprocess.call(['systemctl', '-q', 'is-enabled', 'systemd-networkd.service']) == 0:
+        subprocess.check_call(['systemctl', 'enable', 'wpa_supplicant@' + interface + '.service'])
+        subprocess.check_call(['systemctl', 'restart', 'wpa_supplicant@' + interface + '.service'])
+        systemd_networkd_h = open('/etc/systemd/network/' + interface + '.network', 'a')
+        systemd_networkd_h.write('[Match]\n')
+        systemd_networkd_h.write('Name=' + interface + '\n')
+        systemd_networkd_h.write('Type=wlan\n')
+        systemd_networkd_h.write('WLANInterfaceType=station\n')
+        systemd_networkd_h.write('\n[Network]\n')
+        systemd_networkd_h.write('DHCP=yes\n')
+        systemd_networkd_h.write('IgnoreCarrierLoss=3s\n')
+        systemd_networkd_h.close()
+        subprocess.check_call(['networkctl', 'reload'])
+    else:
+        subprocess.check_call(['systemctl', 'restart', 'wpa_supplicant.service'])
+    if subprocess.call(['systemctl', '-q', 'is-enabled', 'dhcpcd.service']) == 0:
+        subprocess.check_call(['systemctl', 'restart', 'dhcpcd.service'])
     subprocess.check_call(['systemctl', 'start', 'dnsmasq.service'])
 
 if __name__ == '__main__':

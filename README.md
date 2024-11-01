@@ -68,6 +68,9 @@ The file can be missing in which case the defaults are as follows:
 ssid_prefix="Pi $id Wifi Setup"
 wpa_enabled=1
 wpa_key="1234567890"
+interface=""
+driver="nl80211"
+channel="1"
 ```
 
 The $id is replaced with the serial-number of the device

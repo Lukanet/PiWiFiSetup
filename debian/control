@@ -7,6 +7,6 @@ Standards-Version: 3.9.5
 
 Package: pi-wifi-setup
 Architecture: all
-Depends: ${python3:Depends}, python3-flask, dnsmasq-base, hostapd, ${misc:Depends}
+Depends: ${python3:Depends}, python3-flask, dnsmasq-base, hostapd, ${misc:Depends}, rfkill, wireless-tools, wpasupplicant
 Description: PiWiFiSetup is a program to headlessly configure a Raspberry Pi's WiFi connection using any other WiFi-enabled device
  PiWiFiSetup is a program to headlessly configure a Raspberry Pi's WiFi connection using any other WiFi-enabled device

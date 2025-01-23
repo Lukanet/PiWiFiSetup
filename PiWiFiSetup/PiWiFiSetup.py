@@ -243,7 +243,7 @@ def main():
     app.hostapd = None
     interface = app.config_hash['interface']
 
-    # Бринг wifi down if systemd-networkd
+    # Bring wifi down if systemd-networkd
     if subprocess.call(['systemctl', '-q', 'is-enabled', 'systemd-networkd.service']) == 0:
         subprocess.call(['networkctl', 'down', interface])
         subprocess.call(['systemctl', 'stop', 'wpa_supplicant@' + interface + '.service'])

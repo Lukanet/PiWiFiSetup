@@ -1,5 +1,5 @@
 [Timer]
-OnStartupSec=15
+OnActiveSec=15
 
 [Install]
 WantedBy=timers.target

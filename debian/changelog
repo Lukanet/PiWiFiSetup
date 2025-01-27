@@ -1,3 +1,9 @@
+pi-wifi-setup (0.0.7) unstable; urgency=low
+
+  * Minor fixes 
+
+ -- Anton Avramov <avramov@lukanet.com>  Mon, 27 Jan 2025 10:51:11 -0500
+
 pi-wifi-setup (0.0.6) unstable; urgency=low
 
   * Add configurations for interface, driver and channel, so it can be used in

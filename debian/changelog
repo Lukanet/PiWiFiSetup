@@ -1,6 +1,6 @@
 pi-wifi-setup (0.0.7) unstable; urgency=low
 
-  * Minor fixes 
+  * Minor fixes
 
  -- Anton Avramov <avramov@lukanet.com>  Mon, 27 Jan 2025 10:51:11 -0500
 
@@ -26,7 +26,7 @@ pi-wifi-setup (0.0.4) unstable; urgency=low
 
 pi-wifi-setup (0.0.3) unstable; urgency=low
 
-  * Fix missing files 
+  * Fix missing files
 
  -- Anton Avramov <avramov@lukanet.com>  Tue, 03 Aug 2021 12:06:44 -0400
 

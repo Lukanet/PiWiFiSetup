@@ -311,7 +311,8 @@ def main():
         subprocess.check_call(['systemctl', 'restart', 'wpa_supplicant.service'])
     if subprocess.call(['systemctl', '-q', 'is-enabled', 'dhcpcd.service']) == 0:
         subprocess.check_call(['systemctl', 'restart', 'dhcpcd.service'])
-    subprocess.check_call(['systemctl', 'start', 'dnsmasq.service'])
+    if subprocess.call(['systemctl', '-q', 'is-enabled', 'dnsmasq.service']) == 0:
+        subprocess.check_call(['systemctl', 'start', 'dnsmasq.service'])
 
 if __name__ == '__main__':
     main()

@@ -1,3 +1,11 @@
+pi-wifi-setup (0.0.8) unstable; urgency=low
+
+  * Replace the removed Werkzeug shutdown hook with a managed server.
+  * Run WLAN cleanup after server exit, including SIGINT and SIGTERM.
+  * Add regression tests for credential saving and server shutdown.
+
+ -- Anton Avramov <avramov@lukanet.com>  Thu, 08 Oct 2026 22:12:06 -0400
+
 pi-wifi-setup (0.0.7) unstable; urgency=low
 
   * Minor fixes

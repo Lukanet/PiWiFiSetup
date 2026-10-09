@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
 import os
+import signal
 import time
 import subprocess
 from threading import Thread
 
 from flask import Flask, render_template, request, redirect
+from werkzeug.serving import make_server
 from string import Template
 import fileinput
 import tempfile
@@ -34,13 +36,9 @@ def save_credentials():
 
     create_wpa_supplicant(ssid, wifi_key)
     
-    # shutdown
-    func = request.environ.get('werkzeug.server.shutdown')
-    if func is None:
-        raise RuntimeError('Not running with the Werkzeug Server')
-    func()
-
-    return render_template('save_credentials.html', ssid = ssid)
+    response = render_template('save_credentials.html', ssid = ssid)
+    app.shutdown_requested = True
+    return response
 
 
 @app.route('/save_wpa_credentials', methods = ['GET', 'POST'])
@@ -236,6 +234,29 @@ def start_hostapd():
     t.start()
 
 
+def run_setup_server():
+    # Own the server lifecycle instead of relying on the removed
+    # werkzeug.server.shutdown request-environment hook.
+    app.shutdown_requested = False
+    previous_handlers = {}
+
+    def request_shutdown(signum, frame):
+        app.shutdown_requested = True
+
+    try:
+        for signum in (signal.SIGINT, signal.SIGTERM):
+            previous_handlers[signum] = signal.signal(signum, request_shutdown)
+        with make_server('10.0.0.1', 80, app) as server:
+            server.timeout = 0.5
+            # A synchronous request finishes sending its response before cleanup
+            # disconnects the setup access point.
+            while not app.shutdown_requested:
+                server.handle_request()
+    finally:
+        for signum, handler in previous_handlers.items():
+            signal.signal(signum, handler)
+
+
 def main():
     app.debug = True
     app.config_file = '/etc/PiWiFiSetup/PiWiFiSetup.conf'
@@ -282,37 +303,37 @@ def main():
     t = Thread(target=output_reader, args=(dnsmasq,))
     t.start()
 
-    # I didn't figure out a way to use the reloader and have the hostapd and dnsmasq subprocess working
-    app.run(host = '10.0.0.1', port = 80, use_reloader=False)
+    try:
+        run_setup_server()
+    finally:
+        # Cleanup
+        app.hostapd.terminate()
+        app.hostapd_conf.close()
+        dnsmasq.terminate()
+        subprocess.check_call(['ip', 'address', 'del', '10.0.0.1/24', 'dev', interface])
+        # Clear our iptables record
+        subprocess.check_call(['iptables','-D','INPUT'] + iptables_params)
 
-    # Cleanup
-    app.hostapd.terminate()
-    app.hostapd_conf.close()
-    dnsmasq.terminate()
-    subprocess.check_call(['ip', 'address', 'del', '10.0.0.1/24', 'dev', interface])
-    # Clear our iptables record
-    subprocess.check_call(['iptables','-D','INPUT'] + iptables_params)
-
-    subprocess.check_call(['systemctl', 'daemon-reload'])
-    if subprocess.call(['systemctl', '-q', 'is-enabled', 'systemd-networkd.service']) == 0:
-        subprocess.check_call(['systemctl', 'enable', 'wpa_supplicant@' + interface + '.service'])
-        subprocess.check_call(['systemctl', 'restart', 'wpa_supplicant@' + interface + '.service'])
-        systemd_networkd_h = open('/etc/systemd/network/' + interface + '.network', 'a')
-        systemd_networkd_h.write('[Match]\n')
-        systemd_networkd_h.write('Name=' + interface + '\n')
-        systemd_networkd_h.write('Type=wlan\n')
-        systemd_networkd_h.write('WLANInterfaceType=station\n')
-        systemd_networkd_h.write('\n[Network]\n')
-        systemd_networkd_h.write('DHCP=yes\n')
-        systemd_networkd_h.write('IgnoreCarrierLoss=3s\n')
-        systemd_networkd_h.close()
-        subprocess.check_call(['networkctl', 'reload'])
-    else:
-        subprocess.check_call(['systemctl', 'restart', 'wpa_supplicant.service'])
-    if subprocess.call(['systemctl', '-q', 'is-enabled', 'dhcpcd.service']) == 0:
-        subprocess.check_call(['systemctl', 'restart', 'dhcpcd.service'])
-    if subprocess.call(['systemctl', '-q', 'is-enabled', 'dnsmasq.service']) == 0:
-        subprocess.check_call(['systemctl', 'start', 'dnsmasq.service'])
+        subprocess.check_call(['systemctl', 'daemon-reload'])
+        if subprocess.call(['systemctl', '-q', 'is-enabled', 'systemd-networkd.service']) == 0:
+            subprocess.check_call(['systemctl', 'enable', 'wpa_supplicant@' + interface + '.service'])
+            subprocess.check_call(['systemctl', 'restart', 'wpa_supplicant@' + interface + '.service'])
+            systemd_networkd_h = open('/etc/systemd/network/' + interface + '.network', 'a')
+            systemd_networkd_h.write('[Match]\n')
+            systemd_networkd_h.write('Name=' + interface + '\n')
+            systemd_networkd_h.write('Type=wlan\n')
+            systemd_networkd_h.write('WLANInterfaceType=station\n')
+            systemd_networkd_h.write('\n[Network]\n')
+            systemd_networkd_h.write('DHCP=yes\n')
+            systemd_networkd_h.write('IgnoreCarrierLoss=3s\n')
+            systemd_networkd_h.close()
+            subprocess.check_call(['networkctl', 'reload'])
+        else:
+            subprocess.check_call(['systemctl', 'restart', 'wpa_supplicant.service'])
+        if subprocess.call(['systemctl', '-q', 'is-enabled', 'dhcpcd.service']) == 0:
+            subprocess.check_call(['systemctl', 'restart', 'dhcpcd.service'])
+        if subprocess.call(['systemctl', '-q', 'is-enabled', 'dnsmasq.service']) == 0:
+            subprocess.check_call(['systemctl', 'start', 'dnsmasq.service'])
 
 if __name__ == '__main__':
     main()

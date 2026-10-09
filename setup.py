@@ -5,7 +5,7 @@ with open("README.md", "r", encoding="utf-8") as fh:
 
 setuptools.setup(
     name="PiWiFiSetup",
-    version="0.0.5",
+    version="0.0.8",
     author="Lukanet Ltd",
     author_email="avramov@lukanet.com",
     description="PiWiFiSetup is a program to headlessly configure a Raspberry Pi's WiFi connection using any other WiFi-enabled device",
